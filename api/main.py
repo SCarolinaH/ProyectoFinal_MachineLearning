@@ -1,12 +1,16 @@
+"""API de riesgo de mala reseña (Olist).
+
+GET  /        -> confirma que la API está viva
+POST /riesgo  -> recibe las 17 columnas del contrato y devuelve la probabilidad de 1-2 estrellas
+"""
 import os
 import faulthandler
 faulthandler.enable()   # si el proceso se cae por un error de sistema, imprime dónde
 
-# Limitar a 1 hilo ANTES de importar numpy/pandas/xgboost (Render gratis: 512 MB)
+# Render gratis tiene 512 MB y "ve" muchos CPUs del servidor: XGBoost abre un hilo por CPU
+# al predecir y se queda sin memoria (502). Se limita a 1 hilo ANTES de importar las librerías.
 for var in ["OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"]:
     os.environ.setdefault(var, "1")
-
-
 
 import json
 import sys
@@ -20,10 +24,12 @@ import pandas as pd
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-BASE = Path(_file_).resolve().parent
+# Los archivos se buscan junto a este main.py, sin importar desde dónde se lance uvicorn
+BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE))
 
-import preparacion  # noqa: F401,E402  (el pipeline lo necesita para cargarse)
+# El pipeline guardado usa preparacion.crear_variables: hay que importarlo ANTES de cargarlo
+import preparacion  # noqa: F401,E402
 
 app = FastAPI(
     title="API de riesgo de mala reseña · Olist",
@@ -34,7 +40,7 @@ app = FastAPI(
 print("Cargando modelo...", flush=True)
 modelo = joblib.load(BASE / "modelo_riesgo.joblib")
 try:
-    modelo.named_steps["modelo"].set_params(n_jobs=1)
+    modelo.named_steps["modelo"].set_params(n_jobs=1)   # XGBoost con un solo hilo
 except Exception:
     pass
 with open(BASE / "umbral.json") as f:
@@ -49,7 +55,9 @@ COLUMNAS_TEXTO = ["estado_cliente", "categoria", "estado_vendedor", "tipo_pago"]
 
 
 class Pedido(BaseModel):
-    """Las 17 columnas del contrato (todas menos mala_resena)."""
+    """Las 17 columnas del contrato (todas menos mala_resena).
+    Obligatorias: las que todo pedido entregado tiene. Opcionales: las que pueden faltar."""
+
     order_id: str
     order_purchase_timestamp: datetime
     order_delivered_customer_date: datetime
@@ -95,10 +103,11 @@ class Pedido(BaseModel):
 
 
 def construir_fila(datos: dict) -> pd.DataFrame:
+    """Convierte el pedido en una fila con los tipos que espera el pipeline."""
     fila = pd.DataFrame([datos])
     for c in FECHAS:
         s = pd.to_datetime(fila[c])
-        if getattr(s.dt, "tz", None) is not None:
+        if getattr(s.dt, "tz", None) is not None:  # si llega con zona horaria, se quita
             s = s.dt.tz_localize(None)
         fila[c] = s
     for c in COLUMNAS_NUMERICAS:
