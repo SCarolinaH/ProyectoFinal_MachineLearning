@@ -1,0 +1,10 @@
+{
+  "azar": 0.11894444085117392,
+  "regla_retraso": 0.38526179702650293,
+  "regresion_logistica": 0.4660633484162896,
+  "xgboost": 0.4957983193277311,
+  "umbral": 0.2600296437740326,
+  "n_entrenamiento": 61843,
+  "n_validacion": 15461,
+  "red_neuronal": 0.48804137039431156
+}
